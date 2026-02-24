@@ -1,0 +1,106 @@
+name: CD (Deploy VitePress site to Pages)
+
+# region triggers
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+  workflow_dispatch:
+# endregion triggers
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Deploy pre check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+
+    outputs:
+      result: ${{ steps.gen_output.outputs.result }}
+
+    steps:
+      - id: gen_output
+        # region condition
+        if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+        # endregion condition
+        run: |
+          echo "result=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    if: ${{ needs.check.outputs.result }}
+
+    needs:
+      - check
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build with VitePress
+        run: pnpm run docs:build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    needs:
+      - check
+      - build
+
+    if: ${{ needs.check.outputs.result }}
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  failure:
+    name: Failure
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+
+    if: ${{ !needs.check.outputs.result }}
+
+    needs:
+      - check
+
+    steps:
+      - run: echo 'CI failed. Deploy won't be executed'
